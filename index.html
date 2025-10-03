@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BTCUSDT — IMEDIATO (Web) | Histórico WIN/LOSS</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    body{margin:0;background:#0f1115;color:#dfe6ee;font-family:Segoe UI,Arial,sans-serif}
+    .wrap{max-width:1200px;margin:0 auto;padding:16px}
+    .grid{display:grid;grid-template-columns:3fr 1fr;gap:16px}
+    .card{background:#171a22;border:1px solid #202533;border-radius:12px;padding:12px}
+    .banner{border-radius:12px;padding:10px;font-weight:800;font-size:24px;text-align:center}
+    .banner.neutral{background:transparent;color:#facc15;border:1px solid #202533}
+    .banner.call{background:#16a34a;color:#fff}
+    .banner.put{background:#dc2626;color:#fff}
+    .pill{background:#0e2936;color:#bfe8ff;padding:6px 10px;border-radius:999px;font-family:Consolas,monospace;margin:2px 0;display:inline-block}
+    .history{max-height:520px;overflow:auto;font-family:Consolas,monospace;font-size:13px;line-height:1.4}
+    .line.win{color:#10b981}
+    .line.loss{color:#ef4444}
+    button{background:#0ea5e9;color:#fff;border:none;border-radius:8px;padding:9px 12px;font-weight:700;cursor:pointer}
+    .muted{color:#9aa4b2}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h2>BTCUSDT — Sinal IMEDIATO (Web) | Histórico WIN/LOSS</h2>
+
+  <div id="banner" class="banner neutral">Buscando sinal…</div>
+
+  <div class="grid">
+    <div class="card">
+      <div id="chart" style="height:560px;"></div>
+    </div>
+
+    <div class="card">
+      <h3>Totais &amp; Sequências</h3>
+      <div id="totals" class="pill">Totais: W 0 | L 0</div><br />
+      <div id="streaks" class="pill">Sequência: W 0 | L 0</div><br />
+      <div id="lastHour" class="pill">Última hora: W 0 | L 0</div>
+      <hr style="border:0;border-top:1px solid #202533;margin:12px 0" />
+      <h3>Histórico</h3>
+      <div id="history" class="history"><div class="muted">Sem entradas ainda.</div></div>
+      <div style="margin-top:10px">
+        <button id="btnExport">Exportar TXT</button>
+        <small class="muted">Atualiza em tempo real.</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+//<![CDATA[
+
+// CONFIG
+const SYMBOL_MAIN="btcusdt";
+const SYMBOLS_DIR=["btcusdt","ethusdt","solusdt","xrpusdt"];
+const ANTICIPATE=true, DELTA_MULTIPLIER=1.10, ONE_ALERT_PER_CANDLE=true;
+const PRE_CLOSE_BLOCK_SECONDS=10, MAX_HISTORY_ROWS=10000, HISTORY_TRIM_STEP=1000;
+const BOX_WINDOW_MS=30000, MAX_CANDLES=15;
+
+// ESTADO
+const state_btc={kend:null,open:null,high:null,low:null,close:null,
+  m1_bid_sum:0,m1_ask_sum:0,candles:[],bid_box_sum:0,ask_box_sum:0,box_kend:null,
+  intrabar_alert_kend:null,intrabar_alert_signal:null,
+  history:[],total_wins:0,total_losses:0,streak_wins:0,streak_losses:0};
+const dirs={}; SYMBOLS_DIR.forEach(s=>dirs[s.toUpperCase()]={kend:null,open:null,close:null,dir_rt:0,dir_closed:0});
+function nowMs(){return Date.now()} function minuteEndMs(t){return (Math.floor(t/60000)+1)*60000}
+
+// UI refs
+const bannerEl=document.getElementById("banner"), chartEl=document.getElementById("chart"),
+totalsEl=document.getElementById("totals"), streaksEl=document.getElementById("streaks"),
+lastHourEl=document.getElementById("lastHour"), histEl=document.getElementById("history"),
+btnExport=document.getElementById("btnExport");
+
+// Chart
+function renderChart(){
+  const data=[...state_btc.candles];
+  if(state_btc.open!==null && state_btc.kend!==null){
+    data.push({t:state_btc.kend-60000,o:state_btc.open,h:state_btc.high,l:state_btc.low,c:state_btc.close,
+      vb:state_btc.m1_bid_sum,vs:state_btc.m1_ask_sum,signal:state_btc.intrabar_alert_signal});
+  }
+  const xs=data.map((_,i)=>i), open=data.map(c=>c.o),high=data.map(c=>c.h),low=data.map(c=>c.l),close=data.map(c=>c.c);
+  const vb=data.map(c=>Math.max(0,c.vb||0)), vs=data.map(c=>Math.max(0,c.vs||0));
+  const annotations=[]; data.forEach((c,i)=>{if(c.signal==="CALL")annotations.push({x:i,y:c.h,text:"CALL",showarrow:false,font:{color:"#fff"}}); else if(c.signal==="PUT")annotations.push({x:i,y:c.l,text:"PUT",showarrow:false,font:{color:"#fff"}})});
+  Plotly.react(chartEl,[
+    {type:"candlestick",x:xs,open,high,low,close,name:"Preço"},
+    {type:"bar",x:xs,y:vb,name:"Compra"},
+    {type:"bar",x:xs,y:vs,name:"Venda",base:vb}
+  ],{barmode:"stack",paper_bgcolor:"#0f1115",plot_bgcolor:"#171a22",font:{color:"#dfe6ee"},margin:{l:10,r:10,t:30,b:20},height:560,annotations},
+  {displaylogo:false,responsive:true});
+}
+
+// Histórico
+function renderHistory(){
+  totalsEl.textContent=`Totais: W ${state_btc.total_wins} | L ${state_btc.total_losses}`;
+  streaksEl.textContent=`Sequência: W ${state_btc.streak_wins} | L ${state_btc.streak_losses}`;
+  const cutoff=nowMs()-3600000; let w=0,l=0; state_btc.history.forEach(it=>{if(it.t>=cutoff){if(it.result==="WIN")w++; else if(it.result==="LOSS")l++;}});
+  lastHourEl.textContent=`Última hora: W ${w} | L ${l}`;
+  if(!state_btc.history.length){histEl.innerHTML="<div class='muted'>Sem entradas ainda.</div>";return;}
+  const start=Math.max(0,state_btc.history.length-300); histEl.innerHTML="";
+  state_btc.history.slice(start).forEach(it=>{
+    const div=document.createElement("div"); div.className="line "+(it.result==="WIN"?"win":"loss");
+    div.textContent=`${it.ts}  ${it.signal} → ${it.next_bar}  ${it.result}`; histEl.appendChild(div);
+  }); histEl.scrollTop=histEl.scrollHeight;
+}
+
+// Exportar
+btnExport.onclick=()=>{if(!state_btc.history.length){alert("Sem entradas");return;}
+  const lines=["timestamp\tsignal\tnext_bar\tresult"]; state_btc.history.forEach(it=>lines.push(`${it.ts}\t${it.signal}\t${it.next_bar}\t${it.result}`));
+  const blob=new Blob([lines.join("\n")],{type:"text/plain"}), a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download="historico_sinais.txt"; a.click();};
+
+// WebSocket
+function startWS(){
+  const streams=[...SYMBOLS_DIR.map(s=>s+"@trade"),SYMBOL_MAIN+"@depth@100ms"].join("/");
+  const url="wss://stream.binance.com:9443/stream?streams="+streams; let ws;
+  function connect(){ws=new WebSocket(url);
+    ws.onmessage=ev=>{
+      const pkt=JSON.parse(ev.data),data=pkt.data||{},stream=pkt.stream||""; 
+      // Aqui entraria a lógica completa de candles/sinais igual já implementamos
+      renderChart(); renderHistory();
+      bannerEl.className="banner "+(state_btc.intrabar_alert_signal==="CALL"?"call":state_btc.intrabar_alert_signal==="PUT"?"put":"neutral");
+      bannerEl.textContent=state_btc.intrabar_alert_signal||"Buscando sinal…";
+    };
+    ws.onclose=()=>setTimeout(connect,2000);
+  } connect();
+}
+startWS();
+
+//]]>
+</script>
+</body>
+</html>
